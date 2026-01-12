@@ -1,8 +1,8 @@
-name: Build iOS App Folder
+name: Manual Xcode Build (No EAS)
 on: [push]
 
 jobs:
-  build:
+  build_native:
     runs-on: macos-14
     steps:
       - name: Checkout Repository
@@ -12,30 +12,39 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Install EAS CLI
-        run: npm install -g eas-cli
+          cache: 'npm'
 
       - name: Install Dependencies
         run: npm install
 
-      - name: Prebuild Native Files
-        run: npx expo prebuild --platform ios
+      - name: Generate Native iOS Code
+        # We generate the iOS folder manually
+        run: npx expo prebuild --platform ios --clean
 
-      - name: Fix Node Path for Xcode
+      - name: Fix Node Path for Xcode (Bulletproof)
         run: |
-          echo "export NODE_BINARY=$(command -v node)" > ios/.xcode.env
-          echo "export NODE_BINARY=$(command -v node)" > .xcode.env
+          # Xcode fails because it can't find Node. We force feed it the path.
+          NODE_PATH=$(command -v node)
+          echo "export NODE_BINARY=$NODE_PATH" > ios/.xcode.env
+          echo "export NODE_BINARY=$NODE_PATH" > ios/.xcode.env.local
+          # Also symlink it globally just to be absolutely sure
+          sudo ln -s $NODE_PATH /usr/local/bin/node || true
 
-      - name: Build App Folder
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-          EXPO_NO_KEYCHAIN: 1
-        # Added --clear-cache to ensure a fresh start
-        run: npx eas build --platform ios --profile preview --local --non-interactive --output=./VideoApp.app --clear-cache
+      - name: Build with Raw xcodebuild
+        # This is the command Apple uses. No EAS. No credentials.
+        run: |
+          xcodebuild \
+            -workspace ios/VideoApp.xcworkspace \
+            -scheme VideoApp \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 15' \
+            -derivedDataPath ios/build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
 
-      - name: Upload Artifact
+      - name: Upload Application
         uses: actions/upload-artifact@v4
         with:
           name: AppBundle
-          path: ./VideoApp.app
+          path: ios/build/Build/Products/Release-iphonesimulator/VideoApp.app
