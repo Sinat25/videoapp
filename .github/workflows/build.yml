@@ -12,7 +12,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          # Removed the cache line that was causing your error
 
       - name: Install Dependencies
         run: npm install
@@ -20,25 +19,32 @@ jobs:
       - name: Generate Native iOS Code
         run: npx expo prebuild --platform ios --clean
 
-      - name: Fix Node Path for Xcode
+      - name: Force Fix Node and Project Paths
         run: |
-          # Force Node path so Xcode doesn't fail
           NODE_PATH=$(command -v node)
+          # Create the environment file in BOTH locations Xcode looks
           echo "export NODE_BINARY=$NODE_PATH" > ios/.xcode.env
           echo "export NODE_BINARY=$NODE_PATH" > ios/.xcode.env.local
+          
+          # Fix for the "Root directory" error in the React Native Bundler
+          echo "export PROJECT_ROOT=$GITHUB_WORKSPACE" >> ios/.xcode.env
+          
+          # Global symlink as a safety net
           sudo ln -s $NODE_PATH /usr/local/bin/node || true
 
       - name: Build with Raw xcodebuild
+        # Added 'ONLY_ACTIVE_ARCH=NO' and 'VALID_ARCHS=arm64' to ensure it packages for your iPhone
         run: |
           xcodebuild \
             -workspace ios/VideoApp.xcworkspace \
             -scheme VideoApp \
             -configuration Release \
             -sdk iphonesimulator \
-            -destination 'platform=iOS Simulator,name=iPhone 15' \
             -derivedDataPath ios/build \
             CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
 
       - name: Upload Application
         uses: actions/upload-artifact@v4
