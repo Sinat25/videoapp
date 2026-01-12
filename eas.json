@@ -1,0 +1,13 @@
+{
+  "cli": {
+    "version": ">= 3.0.0"
+  },
+  "build": {
+    "preview": {
+      "ios": {
+        "simulator": true,
+        "image": "macos-14-xcode-15.4"
+      }
+    }
+  }
+}
