@@ -1,0 +1,41 @@
+name: Build iOS App Folder
+on: [push]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Prebuild Native Files
+        run: npx expo prebuild --platform ios
+
+      - name: Fix Node Path for Xcode
+        run: |
+          echo "export NODE_BINARY=$(command -v node)" > ios/.xcode.env
+          echo "export NODE_BINARY=$(command -v node)" > .xcode.env
+
+      - name: Build App Folder
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_NO_KEYCHAIN: 1
+        # Added --clear-cache to ensure a fresh start
+        run: npx eas build --platform ios --profile preview --local --non-interactive --output=./VideoApp.app --clear-cache
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AppBundle
+          path: ./VideoApp.app
