@@ -12,26 +12,23 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          # Removed the cache line that was causing your error
 
       - name: Install Dependencies
         run: npm install
 
       - name: Generate Native iOS Code
-        # We generate the iOS folder manually
         run: npx expo prebuild --platform ios --clean
 
-      - name: Fix Node Path for Xcode (Bulletproof)
+      - name: Fix Node Path for Xcode
         run: |
-          # Xcode fails because it can't find Node. We force feed it the path.
+          # Force Node path so Xcode doesn't fail
           NODE_PATH=$(command -v node)
           echo "export NODE_BINARY=$NODE_PATH" > ios/.xcode.env
           echo "export NODE_BINARY=$NODE_PATH" > ios/.xcode.env.local
-          # Also symlink it globally just to be absolutely sure
           sudo ln -s $NODE_PATH /usr/local/bin/node || true
 
       - name: Build with Raw xcodebuild
-        # This is the command Apple uses. No EAS. No credentials.
         run: |
           xcodebuild \
             -workspace ios/VideoApp.xcworkspace \
