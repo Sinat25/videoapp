@@ -1,22 +1,16 @@
 {
   "expo": {
-    "name": "VideoApp",
-    "slug": "videoapp",
+    "name": "CinemaPro",
+    "slug": "cinema-pro",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "dark",
+    "icon": "./assets/icon.png",
     "ios": {
-      "bundleIdentifier": "com.salaheyou.videoapp",
+      "bundleIdentifier": "com.yourname.cinemapro",
       "supportsTablet": true,
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "This app needs access to your videos to create the seamless flow.",
-        "UIViewControllerBasedStatusBarAppearance": false,
-        "ITSAppUsesNonExemptEncryption": false
-      }
-    },
-    "extra": {
-      "eas": {
-        "projectId": "f6dc33f9-2823-4b2b-bc73-8a1adc616852"
+        "NSPhotoLibraryUsageDescription": "This app needs access to your videos to create the experience.",
+        "NSCameraUsageDescription": "This app needs access to the camera to record steps."
       }
     }
   }
