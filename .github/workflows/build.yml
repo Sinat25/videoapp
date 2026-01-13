@@ -1,27 +1,11 @@
-name: Manual iPhone Build
-on: [push]
-
-jobs:
-  build_native:
-    runs-on: macos-14
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install Dependencies
-        run: |
-          # Use legacy-peer-deps to fix the React 18/19 mismatch error
-          npm install --legacy-peer-deps
-          echo "import { registerRootComponent } from 'expo'; import App from './App'; registerRootComponent(App);" > index.js
-
-      - name: Generate Native iOS Code
-        # --no-install speed up build, --non-interactive prevents freezing on Bundle ID check
+- name: Generate Native iOS Code
         run: npx expo prebuild --platform ios --clean --no-install --non-interactive
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install
+          cd ..
 
       - name: Force Fix Node Path
         run: |
@@ -32,7 +16,7 @@ jobs:
 
       - name: Build for Real Device (iPhone)
         run: |
-          # Automatically find the workspace and scheme name created by Expo
+          # The pod install step above creates the .xcworkspace
           WORKSPACE=$(ls ios/*.xcworkspace | head -1)
           SCHEME=$(basename "$WORKSPACE" .xcworkspace)
           
@@ -48,17 +32,3 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES
-
-      - name: Package into IPA
-        run: |
-          # Create a Payload folder, move the app into it, and zip it as an IPA
-          mkdir -p Payload
-          APP_PATH=$(find ios/build/Build/Products/Release-iphoneos -name "*.app" | head -1)
-          cp -R "$APP_PATH" Payload/
-          zip -r VideoApp.ipa Payload
-
-      - name: Upload Application
-        uses: actions/upload-artifact@v4
-        with:
-          name: AppBundle
-          path: VideoApp.ipa
