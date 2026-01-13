@@ -1,8 +1,8 @@
-name: Manual iPhone Build
+name: Build iOS App Folder
 on: [push]
 
 jobs:
-  build_native:
+  build:
     runs-on: macos-14
     steps:
       - name: Checkout Repository
@@ -13,36 +13,29 @@ jobs:
         with:
           node-version: 20
 
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
+
       - name: Install Dependencies
+        run: npm install
+
+      - name: Prebuild Native Files
+        run: npx expo prebuild --platform ios
+
+      - name: Fix Node Path for Xcode
         run: |
-          npm install
-          echo "import { registerRootComponent } from 'expo'; import App from './App'; registerRootComponent(App);" > index.js
+          echo "export NODE_BINARY=$(command -v node)" > ios/.xcode.env
+          echo "export NODE_BINARY=$(command -v node)" > .xcode.env
 
-      - name: Generate Native iOS Code
-        run: npx expo prebuild --platform ios --clean
+      - name: Build App Folder
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EXPO_NO_KEYCHAIN: 1
+        # Added --clear-cache to ensure a fresh start
+        run: npx eas build --platform ios --profile preview --local --non-interactive --output=./VideoApp.app --clear-cache
 
-      - name: Force Fix Node Path
-        run: |
-          NODE_PATH=$(command -v node)
-          echo "export NODE_BINARY=$NODE_PATH" > ios/.xcode.env
-          echo "export NODE_BINARY=$NODE_PATH" > ios/.xcode.env.local
-          sudo ln -s $NODE_PATH /usr/local/bin/node || true
-
-      - name: Build for Real Device (iPhone)
-        run: |
-          xcodebuild \
-            -workspace ios/VideoApp.xcworkspace \
-            -scheme VideoApp \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath ios/build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_IDENTITY="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES
-
-      - name: Upload Application
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: AppBundle
-          path: ios/build/Build/Products/Release-iphoneos/VideoApp.app
+          path: ./VideoApp.app
