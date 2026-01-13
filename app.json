@@ -1,17 +1,12 @@
 {
   "expo": {
-    "name": "CinemaPro",
-    "slug": "cinema-pro",
-    "version": "1.0.0",
-    "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "ios": {
-      "bundleIdentifier": "com.yourname.cinemapro",
-      "supportsTablet": true,
-      "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "This app needs access to your videos to create the experience.",
-        "NSCameraUsageDescription": "This app needs access to the camera to record steps."
-      }
-    }
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app needs access to your videos to create the sequence."
+        }
+      ]
+    ]
   }
 }
