@@ -1,48 +1,49 @@
-name: Manual iPhone Build
-on: [push]
+name: Build iOS IPA
+on:
+  workflow_dispatch:
 
 jobs:
-  build_native:
-    runs-on: macos-14
+  build:
+    runs-on: macos-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
 
       - name: Install Dependencies
         run: |
           npm install
-          echo "import { registerRootComponent } from 'expo'; import App from './App'; registerRootComponent(App);" > index.js
+          npx expo prebuild --platform ios --no-install
 
-      - name: Generate Native iOS Code
-        run: npx expo prebuild --platform ios --clean
-
-      - name: Force Fix Node Path
+      - name: Install Pods
         run: |
-          NODE_PATH=$(command -v node)
-          echo "export NODE_BINARY=$NODE_PATH" > ios/.xcode.env
-          echo "export NODE_BINARY=$NODE_PATH" > ios/.xcode.env.local
-          sudo ln -s $NODE_PATH /usr/local/bin/node || true
+          cd ios
+          pod install
 
-      - name: Build for Real Device (iPhone)
+      - name: Build Unsigned IPA
         run: |
-          xcodebuild \
-            -workspace ios/VideoApp.xcworkspace \
-            -scheme VideoApp \
+          xcodebuild -workspace ios/*.xcworkspace \
+            -scheme $(ls ios | grep .xcodeproj | cut -d. -f1) \
             -configuration Release \
             -sdk iphoneos \
-            -derivedDataPath ios/build \
+            -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_IDENTITY="" \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES
+            CODE_SIGNING_IDENTITY=""
 
-      - name: Upload Application
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/*.app Payload/
+          zip -r VideoExperience.ipa Payload
+
+      - name: Upload Result
         uses: actions/upload-artifact@v4
         with:
-          name: AppBundle
-          path: ios/build/Build/Products/Release-iphoneos/VideoApp.app
+          name: ios-ipa
+          path: VideoExperience.ipa
