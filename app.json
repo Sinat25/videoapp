@@ -14,6 +14,9 @@
         "ITSAppUsesNonExemptEncryption": false
       }
     },
+    "plugins": [
+      "react-native-reanimated"
+    ],
     "extra": {
       "eas": {
         "projectId": "f6dc33f9-2823-4b2b-bc73-8a1adc616852"
