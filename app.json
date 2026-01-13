@@ -1,21 +1,22 @@
 {
   "expo": {
-    "name": "CinemaPro",
-    "slug": "cinema-pro",
+    "name": "VideoApp",
+    "slug": "videoapp",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#000000"
-    },
     "ios": {
+      "bundleIdentifier": "com.salaheyou.videoapp",
       "supportsTablet": true,
-      "bundleIdentifier": "com.yourname.cinemaseamless", 
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "This app needs access to your videos to create the cinematic experience."
+        "NSPhotoLibraryUsageDescription": "This app needs access to your videos to create the seamless flow.",
+        "UIViewControllerBasedStatusBarAppearance": false,
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "f6dc33f9-2823-4b2b-bc73-8a1adc616852"
       }
     }
   }
