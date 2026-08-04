@@ -4,7 +4,6 @@
     "slug": "roblox-video-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "videoapp",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "splash": {

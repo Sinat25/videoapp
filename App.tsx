@@ -1,11 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Image, Animated, Alert, StyleSheet, StatusBar, Platform } from 'react-native';
+import { View, Image, Animated, StyleSheet, StatusBar, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useKeepAwake } from 'expo-keep-awake';
 import * as Notifications from 'expo-notifications';
 import * as SplashScreen from 'expo-splash-screen';
-import * as Linking from 'expo-linking';
-import { scheduleManualNotificationsAsync } from './src/notifications/notificationService';
 import UploadScreen from './src/screens/UploadScreen';
 import LoadingScreen from './src/screens/LoadingScreen';
 import PlayerScreen from './src/screens/PlayerScreen';
@@ -199,68 +197,6 @@ function AppRoot() {
     setHotspots(hs);
     setAppState('loading');
   };
-
-  /**
-   * DEEP LINK -> LOCAL NOTIFICATION
-   *
-   * A companion web page builds links of the form:
-   *   videoapp://notify?title=Hi&body=Hello&seconds=5&count=1
-   * Opening one on the phone launches the app here (custom URL scheme set in
-   * app.json), and we schedule the notification ON DEVICE. This is how the site
-   * "sends" a notification without any server or push credentials, which is what
-   * lets it work on a free sideloaded build.
-   */
-  const linkUrl = Linking.useURL();
-  const handledUrl = useRef<string | null>(null);
-  useEffect(() => {
-    if (!linkUrl || handledUrl.current === linkUrl) return;
-    handledUrl.current = linkUrl;
-
-    let parsed;
-    try {
-      parsed = Linking.parse(linkUrl);
-    } catch (e) {
-      return;
-    }
-
-    // videoapp://notify?... -> hostname 'notify'; tolerate a leading-slash path too.
-    const action = (parsed.hostname || parsed.path || '').replace(/^\/+/, '');
-    if (action !== 'notify') return;
-
-    const q = parsed.queryParams || {};
-    const pick = (v: unknown) => (Array.isArray(v) ? v[0] : v);
-    const title = String(pick(q.title) ?? '').trim();
-    const body = String(pick(q.body) ?? '').trim();
-    const seconds = Math.max(1, parseInt(String(pick(q.seconds) ?? '5'), 10) || 5);
-    const count = Math.max(1, Math.min(200, parseInt(String(pick(q.count) ?? '1'), 10) || 1));
-
-    if (!title && !body) return;
-
-    scheduleManualNotificationsAsync({
-      title,
-      description: body,
-      secondsFromNow: seconds,
-      count,
-    })
-      .then((ids) => {
-        if (ids && ids.length) {
-          Alert.alert(
-            'Notification scheduled',
-            count > 1
-              ? `${count} notifications will arrive starting in ${seconds}s.`
-              : `It will arrive in ${seconds}s.`
-          );
-        } else {
-          Alert.alert(
-            'Permission needed',
-            'Allow notifications in iPhone Settings to receive it.'
-          );
-        }
-      })
-      .catch(() => {
-        Alert.alert('Could not schedule', 'Something went wrong scheduling the notification.');
-      });
-  }, [linkUrl]);
 
   const renderScreen = () => {
     switch (appState) {
