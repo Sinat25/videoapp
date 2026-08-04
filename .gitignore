@@ -1,0 +1,10 @@
+node_modules/
+.expo/
+ios/
+android/
+build/
+Payload/
+*.ipa
+*.tsbuildinfo
+npm-debug.*
+.DS_Store

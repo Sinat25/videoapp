@@ -1,5 +1,8 @@
 name: Manual iPhone Build
-on: [push]
+
+on:
+  push:
+  workflow_dispatch:
 
 jobs:
   build_native:
@@ -14,9 +17,7 @@ jobs:
           node-version: 20
 
       - name: Install Dependencies
-        run: |
-          npm install
-          echo "import { registerRootComponent } from 'expo'; import App from './App'; registerRootComponent(App);" > index.js
+        run: npm install
 
       - name: Generate Native iOS Code
         run: npx expo prebuild --platform ios --clean
@@ -30,19 +31,36 @@ jobs:
 
       - name: Build for Real Device (iPhone)
         run: |
+          set -e
+          # The workspace/scheme name is generated from the app name in app.json,
+          # so we detect it instead of hardcoding it.
+          WORKSPACE=$(ls -d ios/*.xcworkspace | head -n 1)
+          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          echo "Building workspace: $WORKSPACE (scheme: $SCHEME)"
           xcodebuild \
-            -workspace ios/VideoApp.xcworkspace \
-            -scheme VideoApp \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath ios/build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_IDENTITY="" \
+            CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES
 
-      - name: Upload Application
+      - name: Package IPA for Sideloading
+        run: |
+          set -e
+          APP=$(ls -d ios/build/Build/Products/Release-iphoneos/*.app | head -n 1)
+          NAME=$(basename "$APP" .app)
+          rm -rf Payload
+          mkdir -p Payload
+          cp -r "$APP" Payload/
+          zip -qr "$NAME.ipa" Payload
+          echo "Created $NAME.ipa"
+
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: AppBundle
-          path: ios/build/Build/Products/Release-iphoneos/VideoApp.app
+          name: ipa
+          path: "*.ipa"

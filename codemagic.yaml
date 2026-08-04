@@ -1,0 +1,51 @@
+workflows:
+  ios-workflow:
+    name: iOS Build (Unsigned)
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+    environment:
+      node: latest
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install dependencies
+        script: |
+          npm install
+      - name: Expo Prebuild
+        script: |
+          rm -rf ios
+          npx expo prebuild --platform ios --no-install
+      - name: Install Pods
+        script: |
+          cd ios
+          pod install --repo-update
+      - name: Build iOS App Bundle
+        script: |
+          set -e
+          # The workspace/scheme name is generated from the app name in app.json,
+          # so we detect it instead of hardcoding it.
+          WORKSPACE=$(ls -d ios/*.xcworkspace | head -n 1)
+          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          echo "Building workspace: $WORKSPACE (scheme: $SCHEME)"
+          xcodebuild build \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+      - name: Package IPA for Sideloading
+        script: |
+          set -e
+          APP=$(ls -d build/Build/Products/Release-iphoneos/*.app | head -n 1)
+          NAME=$(basename "$APP" .app)
+          rm -rf Payload
+          mkdir -p Payload
+          cp -r "$APP" Payload/
+          zip -qr "$NAME.ipa" Payload
+          echo "Created $NAME.ipa"
+    artifacts:
+      - "*.ipa"

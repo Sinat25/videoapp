@@ -1,26 +1,55 @@
 {
   "expo": {
-    "name": "VideoApp",
-    "slug": "videoapp",
+    "name": "Roblox",
+    "slug": "roblox-video-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "dark",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
-      "bundleIdentifier": "com.salaheyou.videoapp",
       "supportsTablet": true,
+      "bundleIdentifier": "com.roblox.videoapp",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "This app needs access to your videos to create the seamless flow.",
-        "UIViewControllerBasedStatusBarAppearance": false,
-        "ITSAppUsesNonExemptEncryption": false
+        "UIBackgroundModes": [
+          "audio"
+        ],
+        "UIViewControllerBasedStatusBarAppearance": false
       }
     },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "permissions": [
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
     "plugins": [
-      "react-native-reanimated"
-    ],
-    "extra": {
-      "eas": {
-        "projectId": "f6dc33f9-2823-4b2b-bc73-8a1adc616852"
-      }
-    }
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#ffffff",
+          "defaultChannel": "default",
+          "enableBackgroundRemoteNotifications": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "The app needs access to your photos to let you select videos for the steps."
+        }
+      ]
+    ]
   }
 }
