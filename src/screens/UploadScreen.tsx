@@ -14,9 +14,36 @@ import { scheduleManualNotificationsAsync } from '../notifications/notificationS
 // Persist manual notification fields so the user does not need to re-enter them every time.
 const NOTIF_TITLE_KEY = 'MANUAL_NOTIF_TITLE';
 const NOTIF_DESC_KEY = 'MANUAL_NOTIF_DESC';
+const NOTIF_TIME_KEY = 'MANUAL_NOTIF_TIME';
+const NOTIF_USE_TIME_KEY = 'MANUAL_NOTIF_USE_TIME';
+
+/**
+ * Turn a clock time like "19:44:12" (or "19:44") into how many seconds from now
+ * it is. If that time already passed today, it targets the same time tomorrow.
+ * Returns null if the string is not a valid time.
+ */
+function secondsUntilTime(timeStr: string): number | null {
+  const parts = timeStr.trim().split(':');
+  if (parts.length < 2 || parts.length > 3) return null;
+
+  const h = Number.parseInt(parts[0], 10);
+  const m = Number.parseInt(parts[1], 10);
+  const s = parts.length === 3 ? Number.parseInt(parts[2], 10) : 0;
+
+  if (![h, m, s].every(Number.isFinite)) return null;
+  if (h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) return null;
+
+  const now = new Date();
+  const target = new Date();
+  target.setHours(h, m, s, 0);
+
+  let diff = Math.round((target.getTime() - now.getTime()) / 1000);
+  if (diff <= 0) diff += 24 * 60 * 60; // already passed today -> tomorrow
+  return diff;
+}
 
 interface Props {
-  onStart: (paths: string[], hotspots: (Hotspot | null)[]) => void;
+  onStart: (paths: string[], hotspots: (Hotspot | null)[], startVideo: string | null) => void;
   existingVideos: string[];
   existingHotspots: (Hotspot | null)[];
 }
@@ -27,6 +54,8 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   // Video currently being previewed in the full-screen player modal.
   const [previewUri, setPreviewUri] = useState<string | null>(null);
+  // Path of the clip chosen to open first (null = natural first in the list).
+  const [startVideo, setStartVideo] = useState<string | null>(null);
 
   // ✅ Status bar switcher (Show/Hide iPhone status bar)
   const { showStatusBar, setShowStatusBar, themeMode, setThemeMode, advanceOnTouchDown, setAdvanceOnTouchDown } = useAppSettings();
@@ -40,6 +69,9 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
   const [notifCount, setNotifCount] = useState('1');
   const [notifSending, setNotifSending] = useState(false);
   const [notifFieldsLoaded, setNotifFieldsLoaded] = useState(false);
+  // Schedule at an exact clock time (HH:MM:SS) instead of "after N seconds".
+  const [notifUseTime, setNotifUseTime] = useState(false);
+  const [notifTime, setNotifTime] = useState('19:44:12');
 
   // Load saved manual notification title/description
   useEffect(() => {
@@ -48,9 +80,13 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
       try {
         const savedTitle = await AsyncStorage.getItem(NOTIF_TITLE_KEY);
         const savedDesc = await AsyncStorage.getItem(NOTIF_DESC_KEY);
+        const savedTime = await AsyncStorage.getItem(NOTIF_TIME_KEY);
+        const savedUseTime = await AsyncStorage.getItem(NOTIF_USE_TIME_KEY);
         if (!mounted) return;
         if (savedTitle !== null) setNotifTitle(savedTitle);
         if (savedDesc !== null) setNotifDesc(savedDesc);
+        if (savedTime !== null) setNotifTime(savedTime);
+        if (savedUseTime !== null) setNotifUseTime(savedUseTime === '1');
       } catch (e) {
         // Ignore storage read errors (feature is optional)
       } finally {
@@ -74,6 +110,16 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
   }, [notifDesc, notifFieldsLoaded]);
 
   useEffect(() => {
+    if (!notifFieldsLoaded) return;
+    AsyncStorage.setItem(NOTIF_TIME_KEY, notifTime).catch(() => {});
+  }, [notifTime, notifFieldsLoaded]);
+
+  useEffect(() => {
+    if (!notifFieldsLoaded) return;
+    AsyncStorage.setItem(NOTIF_USE_TIME_KEY, notifUseTime ? '1' : '0').catch(() => {});
+  }, [notifUseTime, notifFieldsLoaded]);
+
+  useEffect(() => {
     if (existingVideos.length > 0) {
       setSteps(existingVideos);
       const hs = [...existingHotspots];
@@ -81,6 +127,26 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
       setHotspots(hs);
     }
   }, [existingVideos, existingHotspots]);
+
+  // Load the saved "opens first" choice.
+  useEffect(() => {
+    let mounted = true;
+    VideoStorage.getStartVideo()
+      .then((v) => { if (mounted) setStartVideo(v); })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, []);
+
+  // The clip that actually opens first: the saved choice if it still exists,
+  // otherwise the first uploaded clip in the list.
+  const firstNonNull = steps.find((s) => s !== null) ?? null;
+  const effectiveFirst = startVideo && steps.includes(startVideo) ? startVideo : firstNonNull;
+
+  const setOpensFirst = (uri: string, value: boolean) => {
+    const next = value ? uri : null; // turning off reverts to the natural first
+    setStartVideo(next);
+    VideoStorage.saveStartVideo(next).catch(() => {});
+  };
 
   const pickVideo = async (index: number) => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -92,12 +158,19 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
     if (!result.canceled && result.assets[0]) {
       const newSteps = [...steps];
       try {
+        const previousPath = steps[index];
         const savedPath = await VideoStorage.saveVideoFile(result.assets[0].uri, index);
         newSteps[index] = savedPath;
         setSteps(newSteps);
 
         const validPaths = newSteps.filter((s): s is string => s !== null);
         await VideoStorage.saveVideos(validPaths);
+
+        // Keep the "opens first" choice pointing at this slot if it changed.
+        if (previousPath && previousPath === startVideo) {
+          setStartVideo(savedPath);
+          await VideoStorage.saveStartVideo(savedPath);
+        }
       } catch (e) {
         Alert.alert("Error", "Failed to save video.");
       }
@@ -110,31 +183,18 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
   };
 
   const removeStep = (index: number) => {
+    const removedUri = steps[index];
     const newSteps = steps.filter((_, i) => i !== index);
     const newHotspots = hotspots.filter((_, i) => i !== index);
     setSteps(newSteps);
     setHotspots(newHotspots);
     VideoStorage.saveVideos(newSteps.filter((s): s is string => s !== null));
     VideoStorage.saveHotspots(newHotspots);
-  };
-
-  /**
-   * Choose which video opens first on app launch. The player always starts at
-   * the top of the list, so "make first" just moves this video (and its click
-   * area, kept aligned) to position 0 and persists the new order.
-   */
-  const makeFirst = (index: number) => {
-    if (index === 0) return;
-    const newSteps = [...steps];
-    const newHotspots = [...hotspots];
-    const [movedStep] = newSteps.splice(index, 1);
-    const [movedHotspot] = newHotspots.splice(index, 1);
-    newSteps.unshift(movedStep);
-    newHotspots.unshift(movedHotspot);
-    setSteps(newSteps);
-    setHotspots(newHotspots);
-    VideoStorage.saveVideos(newSteps.filter((s): s is string => s !== null));
-    VideoStorage.saveHotspots(newHotspots);
+    // If the removed clip was the chosen opener, revert to the natural first.
+    if (removedUri && removedUri === startVideo) {
+      setStartVideo(null);
+      VideoStorage.saveStartVideo(null).catch(() => {});
+    }
   };
 
   const saveHotspot = async (hotspot: Hotspot) => {
@@ -148,16 +208,29 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
   };
 
   const scheduleManualNotification = async () => {
-    const seconds = Number.parseInt(notifSeconds, 10);
     const count = Number.parseInt(notifCount, 10);
     if (!notifTitle.trim()) {
       Alert.alert('Missing Title', 'Please enter a notification title.');
       return;
     }
-    if (!Number.isFinite(seconds) || seconds < 1) {
-      Alert.alert('Invalid Seconds', 'Please enter a number of seconds (minimum 1).');
-      return;
+
+    // Resolve the delay from either the clock-time field or the seconds field.
+    let seconds: number;
+    if (notifUseTime) {
+      const computed = secondsUntilTime(notifTime);
+      if (computed === null) {
+        Alert.alert('Invalid Time', 'Enter the time as HH:MM:SS, e.g. 19:44:12.');
+        return;
+      }
+      seconds = computed;
+    } else {
+      seconds = Number.parseInt(notifSeconds, 10);
+      if (!Number.isFinite(seconds) || seconds < 1) {
+        Alert.alert('Invalid Seconds', 'Please enter a number of seconds (minimum 1).');
+        return;
+      }
     }
+
     if (!Number.isFinite(count) || count < 1) {
       Alert.alert('Invalid Count', 'Please enter how many notifications you want (minimum 1).');
       return;
@@ -177,7 +250,10 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
         return;
       }
 
-      Alert.alert('✅ Scheduled', `${ids.length} notification(s) will start in ${seconds} seconds.`);
+      const when = notifUseTime
+        ? `at ${notifTime.trim()} (in ${seconds}s)`
+        : `in ${seconds} seconds`;
+      Alert.alert('✅ Scheduled', `${ids.length} notification(s) will start ${when}.`);
       // Keep the fields (title/description/seconds/count) so the user doesn't
       // have to re-enter them next time.
     } catch (e: any) {
@@ -285,15 +361,42 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
               textAlignVertical="top"
             />
 
-            <Text style={styles.inputLabel}>Send after (seconds)</Text>
-            <TextInput
-              value={notifSeconds}
-              onChangeText={setNotifSeconds}
-              placeholder="5"
-              placeholderTextColor={theme.colors.textSecondary}
-              style={styles.input}
-              keyboardType="number-pad"
-            />
+            <View style={[styles.row, { marginTop: 12 }]}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={styles.panelLabel}>Send at a specific time</Text>
+                <Text style={styles.panelHint}>Pick a clock time (HH:MM:SS) instead of a delay</Text>
+              </View>
+              <Switch value={notifUseTime} onValueChange={setNotifUseTime} />
+            </View>
+
+            {notifUseTime ? (
+              <>
+                <Text style={styles.inputLabel}>Time (HH:MM:SS)</Text>
+                <TextInput
+                  value={notifTime}
+                  onChangeText={setNotifTime}
+                  placeholder="19:44:12"
+                  placeholderTextColor={theme.colors.textSecondary}
+                  style={styles.input}
+                  keyboardType="numbers-and-punctuation"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <Text style={styles.panelHint}>If the time already passed today, it fires tomorrow.</Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.inputLabel}>Send after (seconds)</Text>
+                <TextInput
+                  value={notifSeconds}
+                  onChangeText={setNotifSeconds}
+                  placeholder="5"
+                  placeholderTextColor={theme.colors.textSecondary}
+                  style={styles.input}
+                  keyboardType="number-pad"
+                />
+              </>
+            )}
 
             <Text style={styles.inputLabel}>How many notifications?</Text>
             <TextInput
@@ -314,13 +417,15 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
             />
           </View>
 
-          {steps.map((uri, index) => (
+          {steps.map((uri, index) => {
+            const isFirst = !!uri && uri === effectiveFirst;
+            return (
             <View key={index} style={styles.stepCard}>
               <View style={styles.stepHeader}>
                 <View style={{ flex: 1, paddingRight: 8 }}>
                   <View style={styles.stepLabelRow}>
                     <Text style={styles.stepLabel}>Step {index + 1}</Text>
-                    {index === 0 && !!uri && (
+                    {isFirst && (
                       <Text style={styles.firstBadge}>▶ Opens first</Text>
                     )}
                   </View>
@@ -353,25 +458,33 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
               </View>
 
               {uri && (
-                <View style={[styles.actionRow, { marginTop: 8 }]}>
-                  <PrimaryButton
-                    title={hotspots[index] ? "Edit Click Area" : "Set Click Area"}
-                    onPress={() => setEditingIndex(index)}
-                    variant={hotspots[index] ? 'outline' : 'secondary'}
-                    style={{ flex: 1, height: 44, marginRight: index === 0 ? 0 : 8 }}
-                  />
-                  {index !== 0 && (
+                <>
+                  <View style={[styles.actionRow, { marginTop: 8 }]}>
                     <PrimaryButton
-                      title="★ Open first"
-                      onPress={() => makeFirst(index)}
-                      variant="outline"
+                      title={hotspots[index] ? "Edit Click Area" : "Set Click Area"}
+                      onPress={() => setEditingIndex(index)}
+                      variant={hotspots[index] ? 'outline' : 'secondary'}
                       style={{ flex: 1, height: 44 }}
                     />
-                  )}
-                </View>
+                  </View>
+
+                  {/* Opens-first switch: turn on to make this clip launch first,
+                      turn off to revert to the natural first clip. */}
+                  <View style={styles.firstRow}>
+                    <View style={{ flex: 1, paddingRight: 12 }}>
+                      <Text style={styles.panelLabel}>Opens first</Text>
+                      <Text style={styles.panelHint}>Play this clip first when the app opens</Text>
+                    </View>
+                    <Switch
+                      value={isFirst}
+                      onValueChange={(v) => setOpensFirst(uri, v)}
+                    />
+                  </View>
+                </>
               )}
             </View>
-          ))}
+            );
+          })}
 
           <PrimaryButton 
             title="+ Add New Step" 
@@ -384,7 +497,7 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
         <View style={styles.footer}>
           <PrimaryButton
             title="Launch Experience"
-            onPress={() => onStart(steps.filter((s): s is string => s !== null), hotspots)}
+            onPress={() => onStart(steps.filter((s): s is string => s !== null), hotspots, effectiveFirst)}
             disabled={!canStart}
           />
         </View>
@@ -478,6 +591,15 @@ const createStyles = (theme: any) => StyleSheet.create({
   },
   status: { fontSize: 13, fontWeight: '600', marginTop: 2 },
   actionRow: { flexDirection: 'row' },
+  firstRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
 
   previewContainer: { flex: 1, backgroundColor: '#000', justifyContent: 'center' },
   previewVideo: { width: '100%', height: '100%' },

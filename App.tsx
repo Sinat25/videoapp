@@ -7,7 +7,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import UploadScreen from './src/screens/UploadScreen';
 import LoadingScreen from './src/screens/LoadingScreen';
 import PlayerScreen from './src/screens/PlayerScreen';
-import { VideoStorage, Hotspot } from './src/storage/videoStorage';
+import { VideoStorage, Hotspot, rotateToStart } from './src/storage/videoStorage';
 import { getTheme } from './src/theme';
 import { AppSettingsProvider, useAppSettings } from './src/settings/AppSettingsContext';
 
@@ -77,6 +77,9 @@ function AppRoot() {
   const [appState, setAppState] = useState<AppState>('boot');
   const [videoPaths, setVideoPaths] = useState<string[]>([]);
   const [hotspots, setHotspots] = useState<(Hotspot | null)[]>([]);
+  // Canonical order is kept in videoPaths; this only marks which clip opens
+  // first. The playlist handed to the player is rotated at render time.
+  const [startVideo, setStartVideo] = useState<string | null>(null);
 
   /**
    * LAUNCH HAND-OFF: native splash -> in-app cover -> video, with no black frame.
@@ -167,16 +170,18 @@ function AppRoot() {
 
     const bootstrap = async () => {
       try {
-        // Read both keys in parallel to shave time off the cold start.
-        const [savedVideos, savedHotspots] = await Promise.all([
+        // Read the keys in parallel to shave time off the cold start.
+        const [savedVideos, savedHotspots, savedStart] = await Promise.all([
           VideoStorage.getVideos(),
           VideoStorage.getHotspots(),
+          VideoStorage.getStartVideo(),
         ]);
         if (!mounted) return;
 
         if (savedVideos && savedVideos.length > 0) {
           setVideoPaths(savedVideos);
           setHotspots(savedHotspots);
+          setStartVideo(savedStart);
           // Straight to the video. The setup screen is only reached again when
           // the user taps past the last clip (onExit).
           setAppState('player');
@@ -192,9 +197,10 @@ function AppRoot() {
     return () => { mounted = false; };
   }, []);
 
-  const handleStartLoading = (paths: string[], hs: (Hotspot | null)[]) => {
+  const handleStartLoading = (paths: string[], hs: (Hotspot | null)[], start: string | null) => {
     setVideoPaths(paths);
     setHotspots(hs);
+    setStartVideo(start);
     setAppState('loading');
   };
 
@@ -220,15 +226,18 @@ function AppRoot() {
             onCancel={() => setAppState('upload')}
           />
         );
-      case 'player':
+      case 'player': {
+        // Rotate a COPY so the chosen clip opens first; canonical order stays.
+        const arranged = rotateToStart(videoPaths, hotspots, startVideo);
         return (
           <PlayerScreen
-            videoPaths={videoPaths}
-            hotspots={hotspots}
+            videoPaths={arranged.paths}
+            hotspots={arranged.hotspots}
             onExit={() => setAppState('upload')}
             onFirstFrame={revealVideo}
           />
         );
+      }
     }
   };
 
