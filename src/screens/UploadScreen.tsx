@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Alert, TouchableOpacity, Switch, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Alert, TouchableOpacity, Switch, TextInput, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { Video, ResizeMode } from 'expo-av';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getTheme } from '../theme';
@@ -24,6 +25,8 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
   const [steps, setSteps] = useState<(string | null)[]>([null, null, null]);
   const [hotspots, setHotspots] = useState<(Hotspot | null)[]>([null, null, null]);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  // Video currently being previewed in the full-screen player modal.
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
 
   // ✅ Status bar switcher (Show/Hide iPhone status bar)
   const { showStatusBar, setShowStatusBar, themeMode, setThemeMode, advanceOnTouchDown, setAdvanceOnTouchDown } = useAppSettings();
@@ -109,6 +112,25 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
   const removeStep = (index: number) => {
     const newSteps = steps.filter((_, i) => i !== index);
     const newHotspots = hotspots.filter((_, i) => i !== index);
+    setSteps(newSteps);
+    setHotspots(newHotspots);
+    VideoStorage.saveVideos(newSteps.filter((s): s is string => s !== null));
+    VideoStorage.saveHotspots(newHotspots);
+  };
+
+  /**
+   * Choose which video opens first on app launch. The player always starts at
+   * the top of the list, so "make first" just moves this video (and its click
+   * area, kept aligned) to position 0 and persists the new order.
+   */
+  const makeFirst = (index: number) => {
+    if (index === 0) return;
+    const newSteps = [...steps];
+    const newHotspots = [...hotspots];
+    const [movedStep] = newSteps.splice(index, 1);
+    const [movedHotspot] = newHotspots.splice(index, 1);
+    newSteps.unshift(movedStep);
+    newHotspots.unshift(movedHotspot);
     setSteps(newSteps);
     setHotspots(newHotspots);
     VideoStorage.saveVideos(newSteps.filter((s): s is string => s !== null));
@@ -295,35 +317,59 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
           {steps.map((uri, index) => (
             <View key={index} style={styles.stepCard}>
               <View style={styles.stepHeader}>
-                <View>
-                  <Text style={styles.stepLabel}>Step {index + 1}</Text>
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <View style={styles.stepLabelRow}>
+                    <Text style={styles.stepLabel}>Step {index + 1}</Text>
+                    {index === 0 && !!uri && (
+                      <Text style={styles.firstBadge}>▶ Opens first</Text>
+                    )}
+                  </View>
                   <Text style={[styles.status, { color: uri ? theme.colors.success : theme.colors.textSecondary }]}>
                     {uri ? "Video Ready" : "Missing Video"}
                   </Text>
                 </View>
                 {steps.length > 1 && (
-                  <TouchableOpacity onPress={() => removeStep(index)}>
+                  <TouchableOpacity onPress={() => removeStep(index)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                     <Text style={{ color: theme.colors.danger, fontWeight: '600' }}>Remove</Text>
                   </TouchableOpacity>
                 )}
               </View>
 
               <View style={styles.actionRow}>
-                <PrimaryButton 
-                  title={uri ? "Change Video" : "Upload Video"} 
+                <PrimaryButton
+                  title={uri ? "Change Video" : "Upload Video"}
                   onPress={() => pickVideo(index)}
                   variant={uri ? 'outline' : 'primary'}
                   style={{ flex: 1, height: 44, marginRight: uri ? 8 : 0 }}
                 />
                 {uri && (
-                  <PrimaryButton 
-                    title={hotspots[index] ? "Edit Click Area" : "Set Click Area"} 
-                    onPress={() => setEditingIndex(index)}
-                    variant={hotspots[index] ? 'outline' : 'primary'}
+                  <PrimaryButton
+                    title="▶ Play"
+                    onPress={() => setPreviewUri(uri)}
+                    variant="primary"
                     style={{ flex: 1, height: 44 }}
                   />
                 )}
               </View>
+
+              {uri && (
+                <View style={[styles.actionRow, { marginTop: 8 }]}>
+                  <PrimaryButton
+                    title={hotspots[index] ? "Edit Click Area" : "Set Click Area"}
+                    onPress={() => setEditingIndex(index)}
+                    variant={hotspots[index] ? 'outline' : 'secondary'}
+                    style={{ flex: 1, height: 44, marginRight: index === 0 ? 0 : 8 }}
+                  />
+                  {index !== 0 && (
+                    <PrimaryButton
+                      title="★ Open first"
+                      onPress={() => makeFirst(index)}
+                      variant="outline"
+                      style={{ flex: 1, height: 44 }}
+                    />
+                  )}
+                </View>
+              )}
             </View>
           ))}
 
@@ -336,13 +382,43 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
         </ScrollView>
 
         <View style={styles.footer}>
-          <PrimaryButton 
-            title="Launch Experience" 
+          <PrimaryButton
+            title="Launch Experience"
             onPress={() => onStart(steps.filter((s): s is string => s !== null), hotspots)}
             disabled={!canStart}
           />
         </View>
       </KeyboardAvoidingView>
+
+      {/* Full-screen preview player: play any uploaded video from the list. */}
+      <Modal
+        visible={!!previewUri}
+        animationType="slide"
+        onRequestClose={() => setPreviewUri(null)}
+        supportedOrientations={['portrait', 'landscape']}
+      >
+        <View style={styles.previewContainer}>
+          {previewUri && (
+            <Video
+              source={{ uri: previewUri }}
+              style={styles.previewVideo}
+              resizeMode={ResizeMode.CONTAIN}
+              useNativeControls
+              shouldPlay
+              isLooping
+            />
+          )}
+          <SafeAreaView style={styles.previewCloseWrap} edges={['top', 'right']}>
+            <TouchableOpacity
+              style={styles.previewCloseBtn}
+              onPress={() => setPreviewUri(null)}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Text style={styles.previewCloseText}>✕ Close</Text>
+            </TouchableOpacity>
+          </SafeAreaView>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -387,9 +463,32 @@ const createStyles = (theme: any) => StyleSheet.create({
     borderColor: theme.colors.border
   },
   stepHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: theme.spacing.m },
+  stepLabelRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
   stepLabel: { color: theme.colors.text, fontWeight: '800', fontSize: 18 },
+  firstBadge: {
+    color: theme.colors.success,
+    backgroundColor: theme.colors.surfaceLight,
+    fontSize: 12,
+    fontWeight: '800',
+    marginLeft: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
   status: { fontSize: 13, fontWeight: '600', marginTop: 2 },
   actionRow: { flexDirection: 'row' },
+
+  previewContainer: { flex: 1, backgroundColor: '#000', justifyContent: 'center' },
+  previewVideo: { width: '100%', height: '100%' },
+  previewCloseWrap: { position: 'absolute', top: 0, right: 0, padding: 12 },
+  previewCloseBtn: {
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+  },
+  previewCloseText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   addBtn: { marginTop: theme.spacing.s, marginBottom: theme.spacing.xl, borderStyle: 'dashed', borderWidth: 1, borderColor: theme.colors.textSecondary, backgroundColor: 'transparent' },
   footer: { paddingVertical: theme.spacing.m, borderTopWidth: 1, borderTopColor: theme.colors.border }
 });
