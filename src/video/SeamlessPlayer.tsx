@@ -11,6 +11,12 @@ interface Props {
   playlist: string[];
   hotspots: (Hotspot | null)[];
   onEnd: () => void;
+  /**
+   * Fired exactly once, the moment the very first video frame is actually on
+   * screen. App.tsx uses this to drop the native launch screen, so the user
+   * never sees a black view between the icon tap and the video.
+   */
+  onFirstFrame?: () => void;
 }
 
 /**
@@ -20,7 +26,7 @@ interface Props {
  * - When advancing, we START the next player first, and only swap the UI once
  *   the next player reports "isPlaying" (this prevents a visible pause/black frame).
  */
-export default function SeamlessPlayer({ playlist, hotspots, onEnd }: Props) {
+export default function SeamlessPlayer({ playlist, hotspots, onEnd, onFirstFrame }: Props) {
   const { advanceOnTouchDown } = useAppSettings();
   const [index, setIndex] = useState(0);
   const [activePlayer, setActivePlayer] = useState<'A' | 'B'>('A');
@@ -32,6 +38,11 @@ export default function SeamlessPlayer({ playlist, hotspots, onEnd }: Props) {
   const pendingIndex = useRef<number | null>(null);
   const fallbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Which player currently holds a loaded clip, so we never call play/seek on
+  // an empty one.
+  const loaded = useRef<{ A: boolean; B: boolean }>({ A: false, B: false });
+  const firstFrameSent = useRef(false);
+
   useEffect(() => {
     initializePlayer();
     return () => {
@@ -41,21 +52,28 @@ export default function SeamlessPlayer({ playlist, hotspots, onEnd }: Props) {
   }, []);
 
   const initializePlayer = async () => {
-    // Load first video into A and start playing
-    await loadSource(videoA, playlist[0], true);
-
-    // Preload second video into B (if exists)
-    if (playlist.length > 1) {
-      await loadSource(videoB, playlist[1], false);
-    }
+    // ONLY the first clip is loaded here. Preloading clip 2 is deferred until
+    // the first frame is actually on screen (see handleFirstFrame) so it can
+    // never compete for disk I/O with the video the user is waiting to see.
+    await loadSource('A', playlist[0], true, true);
   };
 
-  const loadSource = async (ref: React.RefObject<Video>, uri: string, shouldPlay: boolean) => {
+  const loadSource = async (
+    key: 'A' | 'B',
+    uri: string,
+    shouldPlay: boolean,
+    isFirstLoad = false
+  ) => {
+    const ref = key === 'A' ? videoA : videoB;
     if (!ref.current) return;
-    try {
-      // Clear any previous state
-      await ref.current.unloadAsync();
-    } catch (e) {}
+    loaded.current[key] = false;
+    if (!isFirstLoad) {
+      try {
+        // Clear any previous state. Skipped on the very first load, where there
+        // is nothing loaded yet and the extra round-trip only delays the frame.
+        await ref.current.unloadAsync();
+      } catch (e) {}
+    }
     try {
       await ref.current.loadAsync(
         { uri },
@@ -69,8 +87,11 @@ export default function SeamlessPlayer({ playlist, hotspots, onEnd }: Props) {
           volume: 1.0,
           progressUpdateIntervalMillis: 100,
         },
-        true // downloadFirst helps avoid a visible hiccup on switch
+        // downloadFirst=false: every clip is already a local file in the app's
+        // documents directory, so the "download" step is pure added latency.
+        false
       );
+      loaded.current[key] = true;
       if (!shouldPlay) {
         // Ensure hidden player is ready at t=0
         await ref.current.setPositionAsync(0);
@@ -80,6 +101,21 @@ export default function SeamlessPlayer({ playlist, hotspots, onEnd }: Props) {
       console.log('Load error', e);
     }
   };
+
+  /**
+   * The first frame is up. Release the launch screen, then quietly warm up the
+   * second clip in the hidden player.
+   */
+  const handleFirstFrame = useCallback(() => {
+    if (firstFrameSent.current) return;
+    firstFrameSent.current = true;
+    onFirstFrame?.();
+
+    if (playlist.length > 1) {
+      loadSource('B', playlist[1], false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onFirstFrame, playlist]);
 
   const handleTouch = (event: any) => {
     const currentHotspot = hotspots[index];
@@ -105,7 +141,7 @@ export default function SeamlessPlayer({ playlist, hotspots, onEnd }: Props) {
       if (nextIndex === null) return;
 
       const nextRef = player === 'A' ? videoA : videoB;
-      const oldRef = player === 'A' ? videoB : videoA;
+      const oldKey: 'A' | 'B' = player === 'A' ? 'B' : 'A';
 
       // Swap UI instantly now that next is confirmed playing
       setActivePlayer(player);
@@ -120,7 +156,7 @@ export default function SeamlessPlayer({ playlist, hotspots, onEnd }: Props) {
       }
 
       // Cleanup old + preload the clip after the one we just switched to
-      cleanupAndPreload(oldRef, nextIndex + 1);
+      cleanupAndPreload(oldKey, nextIndex + 1);
 
       // Make sure the newly active player stays playing
       try {
@@ -145,12 +181,25 @@ export default function SeamlessPlayer({ playlist, hotspots, onEnd }: Props) {
     pendingIndex.current = nextIndex;
 
     // Safety fallback: if iOS doesn't report isPlaying quickly, swap anyway.
-    if (fallbackTimer.current) clearTimeout(fallbackTimer.current);
-    fallbackTimer.current = setTimeout(() => {
-      if (pendingSwitchTo.current === nextPlayer) {
-        swapTo(nextPlayer);
-      }
-    }, 700);
+    const armFallback = (ms: number) => {
+      if (fallbackTimer.current) clearTimeout(fallbackTimer.current);
+      fallbackTimer.current = setTimeout(() => {
+        if (pendingSwitchTo.current === nextPlayer) {
+          swapTo(nextPlayer);
+        }
+      }, ms);
+    };
+
+    // If the tap arrived before the background preload finished, load the clip
+    // now and give it a longer grace period. The swap still happens from
+    // onPlaybackStatusUpdate as soon as it reports playing.
+    if (!loaded.current[nextPlayer]) {
+      armFallback(2500);
+      await loadSource(nextPlayer, playlist[nextIndex], true);
+      return;
+    }
+
+    armFallback(700);
 
     try {
       // Start the next player FIRST while keeping current visible
@@ -163,16 +212,18 @@ export default function SeamlessPlayer({ playlist, hotspots, onEnd }: Props) {
     }
   };
 
-  const cleanupAndPreload = async (oldRef: React.RefObject<Video>, futureIndex: number) => {
+  const cleanupAndPreload = async (oldKey: 'A' | 'B', futureIndex: number) => {
+    const oldRef = oldKey === 'A' ? videoA : videoB;
     try {
       await oldRef.current?.stopAsync();
     } catch (e) {}
     try {
       if (futureIndex < playlist.length) {
         // Load the *future* clip into the now-hidden player
-        await loadSource(oldRef, playlist[futureIndex], false);
+        await loadSource(oldKey, playlist[futureIndex], false);
       } else {
         // Nothing left to preload; keep it unloaded to save memory
+        loaded.current[oldKey] = false;
         try {
           await oldRef.current?.unloadAsync();
         } catch (e) {}
@@ -185,6 +236,9 @@ export default function SeamlessPlayer({ playlist, hotspots, onEnd }: Props) {
   const handleStatusUpdate = (player: 'A' | 'B') => (status: AVPlaybackStatus) => {
     // @ts-ignore - expo-av status typing varies across versions
     if (status?.isLoaded && status.isPlaying) {
+      // Backstop for onReadyForDisplay: if the clip is genuinely playing, a
+      // frame is on screen, so the launch screen can go.
+      if (player === activePlayer) handleFirstFrame();
       if (pendingSwitchTo.current === player) {
         swapTo(player);
       }
@@ -206,6 +260,8 @@ export default function SeamlessPlayer({ playlist, hotspots, onEnd }: Props) {
             ref={videoA}
             style={styles.video}
             resizeMode={ResizeMode.COVER}
+            // The precise "a frame is now visible" signal for the cold start.
+            onReadyForDisplay={handleFirstFrame}
             onPlaybackStatusUpdate={handleStatusUpdate('A')}
           />
         </View>

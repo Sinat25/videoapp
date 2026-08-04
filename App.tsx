@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, StyleSheet, StatusBar, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useKeepAwake } from 'expo-keep-awake';
 import * as Notifications from 'expo-notifications';
+import * as SplashScreen from 'expo-splash-screen';
 import UploadScreen from './src/screens/UploadScreen';
 import LoadingScreen from './src/screens/LoadingScreen';
 import PlayerScreen from './src/screens/PlayerScreen';
@@ -14,6 +15,21 @@ import { AppSettingsProvider, useAppSettings } from './src/settings/AppSettingsC
 // videos from storage. It never draws any logo, title or spinner so the app can
 // jump straight into the video.
 export type AppState = 'boot' | 'upload' | 'loading' | 'player';
+
+/**
+ * HOLD THE LAUNCH SCREEN UNTIL THE VIDEO IS ACTUALLY VISIBLE.
+ *
+ * By default Expo hides the native launch screen the instant the React root
+ * mounts, which happens long before the first clip has been read from disk and
+ * decoded. The result was a black screen sitting between the icon tap and the
+ * video. Holding it here means iOS keeps showing the launch screen (pure black,
+ * no image, no logo) and we swap it out only once a real frame is on screen.
+ */
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// If the video can never be shown (missing or corrupt file), never strand the
+// user on the launch screen.
+const SPLASH_SAFETY_TIMEOUT_MS = 4000;
 
 /**
  * Notifications:
@@ -49,6 +65,25 @@ function AppRoot() {
   const [appState, setAppState] = useState<AppState>('boot');
   const [videoPaths, setVideoPaths] = useState<string[]>([]);
   const [hotspots, setHotspots] = useState<(Hotspot | null)[]>([]);
+
+  // Drop the launch screen. Idempotent: whichever trigger fires first wins.
+  const splashHidden = useRef(false);
+  const hideSplash = useCallback(() => {
+    if (splashHidden.current) return;
+    splashHidden.current = true;
+    SplashScreen.hideAsync().catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(hideSplash, SPLASH_SAFETY_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [hideSplash]);
+
+  // The setup screen has no first frame to wait for, so reveal it as soon as it
+  // has been committed to the screen.
+  useEffect(() => {
+    if (appState === 'upload' || appState === 'loading') hideSplash();
+  }, [appState, hideSplash]);
 
   /**
    * DIRECT VIDEO LAUNCH
@@ -117,10 +152,11 @@ function AppRoot() {
         );
       case 'player':
         return (
-          <PlayerScreen 
-            videoPaths={videoPaths} 
+          <PlayerScreen
+            videoPaths={videoPaths}
             hotspots={hotspots}
-            onExit={() => setAppState('upload')} 
+            onExit={() => setAppState('upload')}
+            onFirstFrame={hideSplash}
           />
         );
     }

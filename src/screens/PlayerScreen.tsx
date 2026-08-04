@@ -7,15 +7,18 @@ interface Props {
   videoPaths: string[];
   hotspots: (Hotspot | null)[];
   onExit: () => void;
+  /** Forwarded to the player: fires once the first video frame is on screen. */
+  onFirstFrame?: () => void;
 }
 
-export default function PlayerScreen({ videoPaths, hotspots, onExit }: Props) {
+export default function PlayerScreen({ videoPaths, hotspots, onExit, onFirstFrame }: Props) {
   return (
     <View style={styles.container}>
-        <SeamlessPlayer 
-            playlist={videoPaths} 
+        <SeamlessPlayer
+            playlist={videoPaths}
             hotspots={hotspots}
             onEnd={onExit}
+            onFirstFrame={onFirstFrame}
         />
     </View>
   );
