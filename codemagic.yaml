@@ -37,7 +37,7 @@ workflows:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES
-      - name: Package IPA for Sideloading
+      - name: Package IPA and ZIP for Sideloading
         script: |
           set -e
           APP=$(ls -d build/Build/Products/Release-iphoneos/*.app | head -n 1)
@@ -45,7 +45,12 @@ workflows:
           rm -rf Payload
           mkdir -p Payload
           cp -r "$APP" Payload/
+          # Both files hold the same Payload/ folder. The .ipa is what sideloaders
+          # (Sideloadly, AltStore) expect; the .zip is the same archive with an
+          # extension that downloads and unzips normally everywhere.
           zip -qr "$NAME.ipa" Payload
-          echo "Created $NAME.ipa"
+          cp "$NAME.ipa" "$NAME.zip"
+          ls -lh "$NAME.ipa" "$NAME.zip"
     artifacts:
       - "*.ipa"
+      - "*.zip"
