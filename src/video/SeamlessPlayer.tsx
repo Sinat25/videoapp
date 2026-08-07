@@ -124,20 +124,31 @@ export default function SeamlessPlayer({ playlist, hotspots, onEnd, onFirstFrame
     }
   };
 
+  // Warm up the second clip in the hidden player. Kept separate from the reveal
+  // so we can start preloading as soon as the first clip is *ready* without
+  // revealing the video before it has actually painted a frame.
+  const nextWarmed = useRef(false);
+  const warmupNextClip = useCallback(() => {
+    if (nextWarmed.current) return;
+    nextWarmed.current = true;
+    if (playlist.length > 1) {
+      loadSource('B', playlist[1], false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playlist]);
+
   /**
-   * The first frame is up. Release the launch screen, then quietly warm up the
-   * second clip in the hidden player.
+   * A REAL first frame is on screen. Release the launch cover, then warm up the
+   * next clip. This must only run once a genuine frame is painted (see
+   * handleStatusUpdate) — revealing any earlier is what caused the brief black
+   * flash between the cover image and the video.
    */
   const handleFirstFrame = useCallback(() => {
     if (firstFrameSent.current) return;
     firstFrameSent.current = true;
     onFirstFrame?.();
-
-    if (playlist.length > 1) {
-      loadSource('B', playlist[1], false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onFirstFrame, playlist]);
+    warmupNextClip();
+  }, [onFirstFrame, warmupNextClip]);
 
   const handleTouch = (event: any) => {
     const currentHotspot = hotspots[index];
@@ -261,9 +272,15 @@ export default function SeamlessPlayer({ playlist, hotspots, onEnd, onFirstFrame
   const handleStatusUpdate = (player: 'A' | 'B') => (status: AVPlaybackStatus) => {
     // @ts-ignore - expo-av status typing varies across versions
     if (status?.isLoaded && status.isPlaying) {
-      // Backstop for onReadyForDisplay: if the clip is genuinely playing, a
-      // frame is on screen, so the launch screen can go.
-      if (player === activePlayer) handleFirstFrame();
+      // COLD-START REVEAL: only once real frames are flowing. positionMillis
+      // advancing past 0 proves the decoder has actually painted a frame on
+      // screen. Revealing on "isPlaying" alone (which can be true at position 0)
+      // or on onReadyForDisplay fades the cover onto a still-black frame, which
+      // is exactly the sub-second black flash we are eliminating here.
+      // @ts-ignore - positionMillis exists on the loaded (success) status
+      if (player === activePlayer && status.positionMillis > 0) {
+        handleFirstFrame();
+      }
       if (pendingSwitchTo.current === player) {
         swapTo(player);
       }
@@ -285,8 +302,10 @@ export default function SeamlessPlayer({ playlist, hotspots, onEnd, onFirstFrame
             ref={videoA}
             style={styles.video}
             resizeMode={ResizeMode.COVER}
-            // The precise "a frame is now visible" signal for the cold start.
-            onReadyForDisplay={handleFirstFrame}
+            // "Ready to display" fires a touch before the first frame is truly
+            // painted, so we only use it to start warming the next clip — never
+            // to reveal the video. The reveal is gated on positionMillis > 0.
+            onReadyForDisplay={warmupNextClip}
             onPlaybackStatusUpdate={handleStatusUpdate('A')}
           />
         </View>
