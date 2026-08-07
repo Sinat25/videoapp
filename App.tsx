@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Image, Animated, StyleSheet, StatusBar, Platform } from 'react-native';
+import { View, Image, Animated, StyleSheet, StatusBar, Platform, Easing } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useKeepAwake } from 'expo-keep-awake';
 import * as Notifications from 'expo-notifications';
@@ -115,9 +115,13 @@ function AppRoot() {
     }
   }, [appState, coverOpacity]);
 
-  // The cover image has painted -> the native splash can go, hidden behind it.
+  // The cover image has decoded. Wait two frames so it is actually composited
+  // on screen BEFORE we tear the native splash away — hiding the native splash
+  // on the same frame as onLoad can expose a not-yet-painted cover (a black
+  // gap). By the time these frames run, the cover fully hides the native splash,
+  // so the swap is image -> identical image (invisible).
   const handleCoverLoaded = useCallback(() => {
-    hideNativeSplash();
+    requestAnimationFrame(() => requestAnimationFrame(hideNativeSplash));
   }, [hideNativeSplash]);
 
   // A real video frame is on screen -> fade the cover away to reveal the video.
@@ -128,6 +132,9 @@ function AppRoot() {
     Animated.timing(coverOpacity, {
       toValue: 0,
       duration: COVER_FADE_MS,
+      // Ease out so the reveal starts gently and settles softly onto the video,
+      // instead of a linear cut that reads as abrupt.
+      easing: Easing.out(Easing.ease),
       useNativeDriver: true,
     }).start(({ finished }) => {
       if (finished) setCoverVisible(false);
