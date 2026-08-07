@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import type { NotifItem } from '../storage/notifStorage';
 
 /**
  * Manual/local notifications helper.
@@ -66,6 +67,93 @@ export async function scheduleManualNotificationsAsync(params: {
   }
 
   return ids;
+}
+
+/**
+ * Schedule ONE local notification after a delay, optionally with an image.
+ *
+ * The image is attached as a local file (content.attachments). On iOS a local
+ * attachment on a locally-scheduled notification is rendered by the system
+ * directly — no Notification Service Extension is required. `imageUri` must be a
+ * local `file://` path (our gallery images live in the app documents dir).
+ *
+ * NOTE: The small monochrome glyph on the notification is ALWAYS the app icon on
+ * iOS and cannot be replaced per-notification. This attaches the chosen image as
+ * the notification's large picture instead (visible when the alert is expanded).
+ */
+export async function scheduleImageNotificationAsync(params: {
+  title: string;
+  body: string;
+  secondsFromNow: number;
+  imageUri?: string | null;
+}): Promise<string | null> {
+  const seconds = Math.max(1, Math.floor(params.secondsFromNow || 1));
+
+  await ensureAndroidDefaultChannelAsync();
+  const ok = await ensureNotificationPermissionsAsync();
+  if (!ok) return null;
+
+  const content: Notifications.NotificationContentInput = {
+    title: (params.title || '').trim() || 'Notification',
+    body: (params.body || '').trim(),
+  };
+  if (params.imageUri) {
+    // iOS-only rich attachment; ignored on Android (which keeps it text-only).
+    (content as any).attachments = [
+      { identifier: 'image', url: params.imageUri, type: 'public.image' },
+    ];
+  }
+
+  return Notifications.scheduleNotificationAsync({
+    content,
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds,
+    },
+  });
+}
+
+/**
+ * Schedule the whole "last-video" list at once: each item fires after its own
+ * delay (seconds) with its own optional image. Called when the user scrolls to
+ * the last video. Returns how many notifications were actually scheduled (0 if
+ * permission was denied or the list was empty).
+ */
+export async function scheduleLastVideoNotificationsAsync(
+  items: NotifItem[]
+): Promise<number> {
+  if (!items || items.length === 0) return 0;
+
+  await ensureAndroidDefaultChannelAsync();
+  const ok = await ensureNotificationPermissionsAsync();
+  if (!ok) return 0;
+
+  let scheduled = 0;
+  for (const item of items) {
+    const seconds = Math.max(1, Math.floor(item.seconds || 1));
+    const content: Notifications.NotificationContentInput = {
+      title: (item.title || '').trim() || 'Notification',
+      body: (item.body || '').trim(),
+    };
+    if (item.imageUri) {
+      (content as any).attachments = [
+        { identifier: 'image', url: item.imageUri, type: 'public.image' },
+      ];
+    }
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content,
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+          seconds,
+        },
+      });
+      scheduled++;
+    } catch (e) {
+      // Skip a bad item (e.g. missing image file) but keep scheduling the rest.
+    }
+  }
+  return scheduled;
 }
 
 // Backward-compatible alias (kept so nothing breaks if you imported the old name somewhere)
