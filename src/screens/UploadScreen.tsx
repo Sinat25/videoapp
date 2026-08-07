@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, Alert, TouchableOpacity, Switch, TextInput, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { Video, ResizeMode } from 'expo-av';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -148,32 +149,65 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
     VideoStorage.saveStartVideo(next).catch(() => {});
   };
 
-  const pickVideo = async (index: number) => {
+  // Ask where to get the video from, then hand off to the right picker.
+  const pickVideo = (index: number) => {
+    Alert.alert(
+      'Add Video',
+      'Choose where to pick the video from.',
+      [
+        { text: 'Photo Library', onPress: () => pickFromLibrary(index) },
+        { text: 'Files', onPress: () => pickFromFiles(index) },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+      { cancelable: true }
+    );
+  };
+
+  const pickFromLibrary = async (index: number) => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Videos,
       allowsEditing: true,
       quality: 1,
     });
-
     if (!result.canceled && result.assets[0]) {
-      const newSteps = [...steps];
-      try {
-        const previousPath = steps[index];
-        const savedPath = await VideoStorage.saveVideoFile(result.assets[0].uri, index);
-        newSteps[index] = savedPath;
-        setSteps(newSteps);
+      await savePickedVideo(index, result.assets[0].uri);
+    }
+  };
 
-        const validPaths = newSteps.filter((s): s is string => s !== null);
-        await VideoStorage.saveVideos(validPaths);
-
-        // Keep the "opens first" choice pointing at this slot if it changed.
-        if (previousPath && previousPath === startVideo) {
-          setStartVideo(savedPath);
-          await VideoStorage.saveStartVideo(savedPath);
-        }
-      } catch (e) {
-        Alert.alert("Error", "Failed to save video.");
+  const pickFromFiles = async (index: number) => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'video/*',
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (!result.canceled && result.assets && result.assets[0]) {
+        await savePickedVideo(index, result.assets[0].uri);
       }
+    } catch (e) {
+      Alert.alert('Error', 'Could not open Files. Please try again.');
+    }
+  };
+
+  // Copy the chosen video into app storage and update the step + saved order.
+  const savePickedVideo = async (index: number, uri: string) => {
+    const newSteps = [...steps];
+    try {
+      const previousPath = steps[index];
+      const savedPath = await VideoStorage.saveVideoFile(uri, index);
+      newSteps[index] = savedPath;
+      setSteps(newSteps);
+
+      const validPaths = newSteps.filter((s): s is string => s !== null);
+      await VideoStorage.saveVideos(validPaths);
+
+      // Keep the "opens first" choice pointing at this slot if it changed.
+      if (previousPath && previousPath === startVideo) {
+        setStartVideo(savedPath);
+        await VideoStorage.saveStartVideo(savedPath);
+      }
+    } catch (e) {
+      Alert.alert('Error', 'Failed to save video.');
     }
   };
 
