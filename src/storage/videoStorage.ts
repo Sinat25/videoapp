@@ -19,7 +19,7 @@ export interface Hotspot {
  * and re-attach it to the CURRENT documents directory, so the saved videos are
  * still found and the app can launch straight into them.
  */
-const rebasePath = (path: string): string => {
+export const rebasePath = (path: string): string => {
   const dir = FileSystem.documentDirectory;
   if (!dir || !path || path.startsWith(dir)) return path;
   if (!path.includes('/Documents/')) return path;

@@ -3,6 +3,7 @@ import { View, StyleSheet, Dimensions, TouchableWithoutFeedback } from 'react-na
 import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
 import { Hotspot } from '../storage/videoStorage';
 import { useAppSettings } from '../settings/AppSettingsContext';
+import { scheduleLastVideoNotificationsAsync } from '../notifications/notificationService';
 
 // Get full screen dimensions including status bar area
 const { width, height } = Dimensions.get('screen');
@@ -27,9 +28,30 @@ interface Props {
  *   the next player reports "isPlaying" (this prevents a visible pause/black frame).
  */
 export default function SeamlessPlayer({ playlist, hotspots, onEnd, onFirstFrame }: Props) {
-  const { advanceOnTouchDown } = useAppSettings();
+  const { advanceOnTouchDown, lastVideoNotifEnabled, notifItems } = useAppSettings();
   const [index, setIndex] = useState(0);
   const [activePlayer, setActivePlayer] = useState<'A' | 'B'>('A');
+
+  // Latest notification settings, mirrored into refs so the callbacks below
+  // (created once, with an empty dep array) always read the current values.
+  const notifEnabledRef = useRef(lastVideoNotifEnabled);
+  const notifItemsRef = useRef(notifItems);
+  useEffect(() => { notifEnabledRef.current = lastVideoNotifEnabled; }, [lastVideoNotifEnabled]);
+  useEffect(() => { notifItemsRef.current = notifItems; }, [notifItems]);
+  // Guard so we schedule the last-video list at most once per player session.
+  const lastNotifScheduledRef = useRef(false);
+
+  // Fire the "last video reached" notifications when the user scrolls onto the
+  // final clip. Guarded so it runs once, and only when the feature is enabled.
+  const maybeScheduleLastVideoNotifs = useCallback((arrivedIndex: number) => {
+    if (lastNotifScheduledRef.current) return;
+    if (!notifEnabledRef.current) return;
+    if (arrivedIndex !== playlist.length - 1) return;
+    if (!notifItemsRef.current || notifItemsRef.current.length === 0) return;
+    lastNotifScheduledRef.current = true;
+    scheduleLastVideoNotificationsAsync(notifItemsRef.current).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playlist.length]);
 
   const videoA = useRef<Video>(null);
   const videoB = useRef<Video>(null);
@@ -146,6 +168,9 @@ export default function SeamlessPlayer({ playlist, hotspots, onEnd, onFirstFrame
       // Swap UI instantly now that next is confirmed playing
       setActivePlayer(player);
       setIndex(nextIndex);
+
+      // Scrolled onto the last clip -> schedule the last-video notifications.
+      maybeScheduleLastVideoNotifs(nextIndex);
 
       // Clear pending + fallback timer
       pendingSwitchTo.current = null;

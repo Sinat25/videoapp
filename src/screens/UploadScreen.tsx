@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Alert, TouchableOpacity, Switch, TextInput, KeyboardAvoidingView, Platform, Modal } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Alert, TouchableOpacity, Switch, TextInput, KeyboardAvoidingView, Platform, Modal, Image } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Video, ResizeMode } from 'expo-av';
@@ -10,7 +10,7 @@ import PrimaryButton from '../ui/PrimaryButton';
 import { VideoStorage, Hotspot } from '../storage/videoStorage';
 import HotspotEditor from './HotspotEditor';
 import { useAppSettings } from '../settings/AppSettingsContext';
-import { scheduleManualNotificationsAsync } from '../notifications/notificationService';
+import { scheduleManualNotificationsAsync, ensureNotificationPermissionsAsync } from '../notifications/notificationService';
 
 // Persist manual notification fields so the user does not need to re-enter them every time.
 const NOTIF_TITLE_KEY = 'MANUAL_NOTIF_TITLE';
@@ -59,7 +59,14 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
   const [startVideo, setStartVideo] = useState<string | null>(null);
 
   // ✅ Status bar switcher (Show/Hide iPhone status bar)
-  const { showStatusBar, setShowStatusBar, themeMode, setThemeMode, advanceOnTouchDown, setAdvanceOnTouchDown } = useAppSettings();
+  const {
+    showStatusBar, setShowStatusBar,
+    themeMode, setThemeMode,
+    advanceOnTouchDown, setAdvanceOnTouchDown,
+    lastVideoNotifEnabled, setLastVideoNotifEnabled,
+    notifImages, addNotifImage, removeNotifImage,
+    notifItems, addNotifItem, updateNotifItem, removeNotifItem,
+  } = useAppSettings();
   const theme = getTheme(themeMode);
   const styles = createStyles(theme);
 
@@ -297,6 +304,46 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
     }
   };
 
+  // ---- Last-video notifications ----
+
+  // Turning the feature on: seed one item if empty and ask for permission early
+  // so the notifications aren't silently dropped when the last video is reached.
+  const onToggleLastNotif = (v: boolean) => {
+    setLastVideoNotifEnabled(v);
+    if (v) {
+      if (notifItems.length === 0) addNotifItem();
+      ensureNotificationPermissionsAsync().catch(() => {});
+    }
+  };
+
+  // Pick an image from the library and add it to the shared gallery.
+  const pickNotifImage = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 1,
+      });
+      if (!result.canceled && result.assets[0]) {
+        await addNotifImage(result.assets[0].uri);
+      }
+    } catch (e) {
+      Alert.alert('Error', 'Failed to add image.');
+    }
+  };
+
+  const confirmRemoveNotifImage = (path: string) => {
+    Alert.alert('Remove Image', 'Remove this image from the gallery?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: () => { removeNotifImage(path).catch(() => {}); } },
+    ]);
+  };
+
+  // Seconds field: keep it a clean integer, allow clearing while typing.
+  const onChangeItemSeconds = (id: string, text: string) => {
+    const digits = text.replace(/[^0-9]/g, '');
+    updateNotifItem(id, { seconds: digits ? Number.parseInt(digits, 10) : 0 });
+  };
+
   if (editingIndex !== null && steps[editingIndex]) {
     return (
       <HotspotEditor 
@@ -447,6 +494,138 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
               onPress={scheduleManualNotification}
               disabled={notifSending}
               loading={notifSending}
+              style={{ marginTop: theme.spacing.m }}
+            />
+          </View>
+
+          {/* ✅ Last-video Notifications: fire a list of notifications after the
+              user scrolls to the LAST video, each with its own delay + image. */}
+          <View style={styles.panel}>
+            <Text style={styles.panelTitle}>Last-video Notifications</Text>
+            <View style={styles.row}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={styles.panelLabel}>Notify after the last video</Text>
+                <Text style={styles.panelHint}>
+                  When you scroll to the last video, each notification below fires after its own delay.
+                </Text>
+              </View>
+              <Switch value={lastVideoNotifEnabled} onValueChange={onToggleLastNotif} />
+            </View>
+
+            {/* Shared image gallery */}
+            <Text style={[styles.inputLabel, { marginTop: 14 }]}>Images</Text>
+            <Text style={styles.panelHint}>
+              Upload images, then pick one per notification below. The image shows inside the
+              notification when expanded. (iOS can't replace the small app icon itself.)
+            </Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }}>
+              {notifImages.map((img) => (
+                <TouchableOpacity
+                  key={img}
+                  onLongPress={() => confirmRemoveNotifImage(img)}
+                  delayLongPress={300}
+                  activeOpacity={0.8}
+                  style={styles.galleryItem}
+                >
+                  <Image source={{ uri: img }} style={styles.galleryImage} />
+                  <TouchableOpacity
+                    style={styles.galleryDelete}
+                    onPress={() => confirmRemoveNotifImage(img)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.galleryDeleteText}>✕</Text>
+                  </TouchableOpacity>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity style={styles.galleryAdd} onPress={pickNotifImage} activeOpacity={0.8}>
+                <Text style={styles.galleryAddText}>＋</Text>
+                <Text style={styles.galleryAddLabel}>Add</Text>
+              </TouchableOpacity>
+            </ScrollView>
+
+            {/* Notification items */}
+            {notifItems.map((item, idx) => (
+              <View key={item.id} style={styles.notifItem}>
+                <View style={styles.stepHeader}>
+                  <Text style={styles.stepLabel}>Notification {idx + 1}</Text>
+                  <TouchableOpacity
+                    onPress={() => removeNotifItem(item.id)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={{ color: theme.colors.danger, fontWeight: '600' }}>Remove</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.inputLabel}>Delay after last video (seconds)</Text>
+                <TextInput
+                  value={item.seconds > 0 ? String(item.seconds) : ''}
+                  onChangeText={(t) => onChangeItemSeconds(item.id, t)}
+                  placeholder="e.g. 2"
+                  placeholderTextColor={theme.colors.textSecondary}
+                  style={styles.input}
+                  keyboardType="number-pad"
+                />
+
+                <Text style={styles.inputLabel}>Title</Text>
+                <TextInput
+                  value={item.title}
+                  onChangeText={(t) => updateNotifItem(item.id, { title: t })}
+                  placeholder="Enter title"
+                  placeholderTextColor={theme.colors.textSecondary}
+                  style={styles.input}
+                  autoCapitalize="sentences"
+                />
+
+                <Text style={styles.inputLabel}>Description</Text>
+                <TextInput
+                  value={item.body}
+                  onChangeText={(t) => updateNotifItem(item.id, { body: t })}
+                  placeholder="Enter description (optional)"
+                  placeholderTextColor={theme.colors.textSecondary}
+                  style={[styles.input, { height: 72 }]}
+                  multiline
+                  textAlignVertical="top"
+                />
+
+                <Text style={styles.inputLabel}>Image</Text>
+                {notifImages.length === 0 ? (
+                  <Text style={styles.panelHint}>Add an image above to attach it here.</Text>
+                ) : (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+                    <TouchableOpacity
+                      onPress={() => updateNotifItem(item.id, { imageUri: null })}
+                      style={[styles.pickChip, item.imageUri === null && styles.pickChipActive]}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.pickChipText, item.imageUri === null && styles.pickChipTextActive]}>None</Text>
+                    </TouchableOpacity>
+                    {notifImages.map((img) => {
+                      const selected = item.imageUri === img;
+                      return (
+                        <TouchableOpacity
+                          key={img}
+                          onPress={() => updateNotifItem(item.id, { imageUri: img })}
+                          style={[styles.pickThumbWrap, selected && styles.pickThumbWrapActive]}
+                          activeOpacity={0.8}
+                        >
+                          <Image source={{ uri: img }} style={styles.pickThumb} />
+                          {selected && (
+                            <View style={styles.pickThumbCheck}>
+                              <Text style={styles.pickThumbCheckText}>✓</Text>
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                )}
+              </View>
+            ))}
+
+            <PrimaryButton
+              title="+ Add Notification"
+              onPress={addNotifItem}
+              variant="secondary"
               style={{ marginTop: theme.spacing.m }}
             />
           </View>
@@ -634,6 +813,90 @@ const createStyles = (theme: any) => StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
   },
+
+  // Last-video notifications
+  galleryItem: {
+    width: 72,
+    height: 72,
+    borderRadius: 12,
+    marginRight: 10,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surfaceLight,
+  },
+  galleryImage: { width: '100%', height: '100%' },
+  galleryDelete: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  galleryDeleteText: { color: '#fff', fontSize: 12, fontWeight: '700', lineHeight: 14 },
+  galleryAdd: {
+    width: 72,
+    height: 72,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: theme.colors.textSecondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  galleryAddText: { color: theme.colors.textSecondary, fontSize: 24, fontWeight: '400', lineHeight: 26 },
+  galleryAddLabel: { color: theme.colors.textSecondary, fontSize: 11, fontWeight: '700' },
+
+  notifItem: {
+    marginTop: theme.spacing.m,
+    paddingTop: theme.spacing.m,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+
+  pickChip: {
+    height: 44,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginRight: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surfaceLight,
+  },
+  pickChipActive: { borderColor: theme.colors.primary, backgroundColor: theme.colors.primary },
+  pickChipText: { color: theme.colors.text, fontWeight: '700', fontSize: 13 },
+  pickChipTextActive: { color: '#fff' },
+
+  pickThumbWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
+    marginRight: 10,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  pickThumbWrapActive: { borderColor: theme.colors.primary },
+  pickThumb: { width: '100%', height: '100%' },
+  pickThumbCheck: {
+    position: 'absolute',
+    bottom: 2,
+    right: 2,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: theme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickThumbCheckText: { color: '#fff', fontSize: 12, fontWeight: '800', lineHeight: 14 },
 
   previewContainer: { flex: 1, backgroundColor: '#000', justifyContent: 'center' },
   previewVideo: { width: '100%', height: '100%' },
