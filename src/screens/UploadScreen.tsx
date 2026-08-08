@@ -44,7 +44,12 @@ function secondsUntilTime(timeStr: string): number | null {
 }
 
 interface Props {
-  onStart: (paths: string[], hotspots: (Hotspot | null)[], startVideo: string | null) => void;
+  onStart: (
+    paths: string[],
+    hotspots: (Hotspot | null)[],
+    advanceFlags: (boolean | null)[],
+    startVideo: string | null
+  ) => void;
   existingVideos: string[];
   existingHotspots: (Hotspot | null)[];
 }
@@ -52,6 +57,9 @@ interface Props {
 export default function UploadScreen({ onStart, existingVideos, existingHotspots }: Props) {
   const [steps, setSteps] = useState<(string | null)[]>([null, null, null]);
   const [hotspots, setHotspots] = useState<(Hotspot | null)[]>([null, null, null]);
+  // Per-video "advance on touch down" overrides, parallel to steps.
+  // null = inherit the global default; true/false = explicit per-video choice.
+  const [advanceFlags, setAdvanceFlags] = useState<(boolean | null)[]>([]);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   // Video currently being previewed in the full-screen player modal.
   const [previewUri, setPreviewUri] = useState<string | null>(null);
@@ -145,6 +153,15 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
     return () => { mounted = false; };
   }, []);
 
+  // Load the saved per-video "advance on touch down" overrides.
+  useEffect(() => {
+    let mounted = true;
+    VideoStorage.getAdvanceFlags()
+      .then((f) => { if (mounted) setAdvanceFlags(f); })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, []);
+
   // The clip that actually opens first: the saved choice if it still exists,
   // otherwise the first uploaded clip in the list.
   const firstNonNull = steps.find((s) => s !== null) ?? null;
@@ -218,19 +235,37 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
     }
   };
 
+  // Keep the flags array aligned to the current number of steps (pad with null).
+  const paddedFlags = (): (boolean | null)[] => {
+    const af = [...advanceFlags];
+    while (af.length < steps.length) af.push(null);
+    return af;
+  };
+
+  const setVideoAdvance = (index: number, value: boolean) => {
+    const next = paddedFlags();
+    next[index] = value;
+    setAdvanceFlags(next);
+    VideoStorage.saveAdvanceFlags(next).catch(() => {});
+  };
+
   const addStep = () => {
     setSteps([...steps, null]);
     setHotspots([...hotspots, null]);
+    setAdvanceFlags([...paddedFlags(), null]);
   };
 
   const removeStep = (index: number) => {
     const removedUri = steps[index];
     const newSteps = steps.filter((_, i) => i !== index);
     const newHotspots = hotspots.filter((_, i) => i !== index);
+    const newFlags = paddedFlags().filter((_, i) => i !== index);
     setSteps(newSteps);
     setHotspots(newHotspots);
+    setAdvanceFlags(newFlags);
     VideoStorage.saveVideos(newSteps.filter((s): s is string => s !== null));
     VideoStorage.saveHotspots(newHotspots);
+    VideoStorage.saveAdvanceFlags(newFlags).catch(() => {});
     // If the removed clip was the chosen opener, revert to the natural first.
     if (removedUri && removedUri === startVideo) {
       setStartVideo(null);
@@ -403,14 +438,15 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
           </View>
 
 
-          {/* ✅ Touch-to-advance behavior */}
+          {/* ✅ Touch-to-advance behavior (default; overridable per video below) */}
           <View style={styles.panel}>
-            <Text style={styles.panelTitle}>Touch behavior</Text>
+            <Text style={styles.panelTitle}>Touch behavior (default)</Text>
             <View style={styles.row}>
               <View style={{ flex: 1, paddingRight: 12 }}>
                 <Text style={styles.panelLabel}>Advance on touch down</Text>
                 <Text style={styles.panelHint}>
-                  ON: go to next video as soon as you touch. OFF (default): go to next video when you lift your finger.
+                  ON: go to next video as soon as you touch. OFF: go to next video when you lift your finger.
+                  This is the default — each video below can override it.
                 </Text>
               </View>
               <Switch value={advanceOnTouchDown} onValueChange={setAdvanceOnTouchDown} />
@@ -693,6 +729,21 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
                       onValueChange={(v) => setOpensFirst(uri, v)}
                     />
                   </View>
+
+                  {/* Per-video advance-on-touch-down override. Defaults to the
+                      global "Touch behavior" setting until changed here. */}
+                  <View style={styles.firstRow}>
+                    <View style={{ flex: 1, paddingRight: 12 }}>
+                      <Text style={styles.panelLabel}>Advance on touch down</Text>
+                      <Text style={styles.panelHint}>
+                        For this video: ON = next on touch, OFF = next on lift.
+                      </Text>
+                    </View>
+                    <Switch
+                      value={advanceFlags[index] ?? advanceOnTouchDown}
+                      onValueChange={(v) => setVideoAdvance(index, v)}
+                    />
+                  </View>
                 </>
               )}
             </View>
@@ -710,7 +761,7 @@ export default function UploadScreen({ onStart, existingVideos, existingHotspots
         <View style={styles.footer}>
           <PrimaryButton
             title="Launch Experience"
-            onPress={() => onStart(steps.filter((s): s is string => s !== null), hotspots, effectiveFirst)}
+            onPress={() => onStart(steps.filter((s): s is string => s !== null), hotspots, paddedFlags(), effectiveFirst)}
             disabled={!canStart}
           />
         </View>

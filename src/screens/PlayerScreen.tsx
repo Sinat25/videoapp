@@ -6,17 +6,20 @@ import { Hotspot } from '../storage/videoStorage';
 interface Props {
   videoPaths: string[];
   hotspots: (Hotspot | null)[];
+  /** Per-video "advance on touch down" overrides, parallel to videoPaths. */
+  advanceFlags?: (boolean | null)[];
   onExit: () => void;
   /** Forwarded to the player: fires once the first video frame is on screen. */
   onFirstFrame?: () => void;
 }
 
-export default function PlayerScreen({ videoPaths, hotspots, onExit, onFirstFrame }: Props) {
+export default function PlayerScreen({ videoPaths, hotspots, advanceFlags, onExit, onFirstFrame }: Props) {
   return (
     <View style={styles.container}>
         <SeamlessPlayer
             playlist={videoPaths}
             hotspots={hotspots}
+            advanceFlags={advanceFlags}
             onEnd={onExit}
             onFirstFrame={onFirstFrame}
         />
