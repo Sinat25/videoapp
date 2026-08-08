@@ -180,6 +180,41 @@ export default function SeamlessPlayer({ playlist, hotspots, advanceFlags, onEnd
     handleNext();
   };
 
+  /**
+   * GESTURE-SAFE ADVANCE.
+   *
+   * onPressIn and onPressOut belong to the SAME physical tap. Because each video
+   * can now use a different advance mode (touch-down vs lift), advancing on
+   * press changes the index, which flips the mode for the new video, which would
+   * then let the *release* of the same tap advance a second time. That is the
+   * "one tap skips several videos / it skips on its own" bug.
+   *
+   * Fix: lock the mode at the moment the finger goes down, and allow at most one
+   * advance per gesture. The release can only advance if the down did not.
+   */
+  const gestureModeRef = useRef<boolean | null>(null);
+  const gestureHandledRef = useRef(false);
+
+  const handlePressIn = (event: any) => {
+    // Start of a new tap: capture this clip's mode now and reset the guard.
+    gestureHandledRef.current = false;
+    gestureModeRef.current = advanceForCurrent;
+    if (advanceForCurrent) {
+      gestureHandledRef.current = true;
+      handleTouch(event);
+    }
+  };
+
+  const handlePressOut = (event: any) => {
+    // Only the release advances in "lift" mode, and only if the press did not
+    // already advance this same gesture.
+    if (gestureHandledRef.current) return;
+    if (gestureModeRef.current === false) {
+      gestureHandledRef.current = true;
+      handleTouch(event);
+    }
+  };
+
   const swapTo = useCallback(
     async (player: 'A' | 'B') => {
       const nextIndex = pendingIndex.current;
@@ -215,6 +250,10 @@ export default function SeamlessPlayer({ playlist, hotspots, advanceFlags, onEnd
   );
 
   const handleNext = async () => {
+    // Ignore new advances while a switch is still in flight, so a burst of
+    // events can never queue several jumps at once.
+    if (pendingSwitchTo.current !== null) return;
+
     const nextIndex = index + 1;
 
     if (nextIndex >= playlist.length) {
@@ -301,8 +340,8 @@ export default function SeamlessPlayer({ playlist, hotspots, advanceFlags, onEnd
 
   return (
     <TouchableWithoutFeedback
-      onPressIn={advanceForCurrent ? handleTouch : undefined}
-      onPressOut={!advanceForCurrent ? handleTouch : undefined}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
     >
       <View style={styles.container}>
         {/* Player A */}
