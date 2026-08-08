@@ -11,6 +11,12 @@ const { width, height } = Dimensions.get('screen');
 interface Props {
   playlist: string[];
   hotspots: (Hotspot | null)[];
+  /**
+   * Per-video "advance on touch down" override, parallel to `playlist`. Each
+   * entry is true/false for an explicit choice, or null to inherit the global
+   * default. Missing entries also inherit the global default.
+   */
+  advanceFlags?: (boolean | null)[];
   onEnd: () => void;
   /**
    * Fired exactly once, the moment the very first video frame is actually on
@@ -27,9 +33,15 @@ interface Props {
  * - When advancing, we START the next player first, and only swap the UI once
  *   the next player reports "isPlaying" (this prevents a visible pause/black frame).
  */
-export default function SeamlessPlayer({ playlist, hotspots, onEnd, onFirstFrame }: Props) {
+export default function SeamlessPlayer({ playlist, hotspots, advanceFlags, onEnd, onFirstFrame }: Props) {
   const { advanceOnTouchDown, lastVideoNotifEnabled, notifItems } = useAppSettings();
   const [index, setIndex] = useState(0);
+
+  // The touch behavior for the CURRENT clip: its own override if set, else the
+  // global default. Computed per render so it always tracks the active index.
+  const perVideoAdvance = advanceFlags?.[index];
+  const advanceForCurrent =
+    perVideoAdvance === true || perVideoAdvance === false ? perVideoAdvance : advanceOnTouchDown;
   const [activePlayer, setActivePlayer] = useState<'A' | 'B'>('A');
 
   // Latest notification settings, mirrored into refs so the callbacks below
@@ -289,8 +301,8 @@ export default function SeamlessPlayer({ playlist, hotspots, onEnd, onFirstFrame
 
   return (
     <TouchableWithoutFeedback
-      onPressIn={advanceOnTouchDown ? handleTouch : undefined}
-      onPressOut={!advanceOnTouchDown ? handleTouch : undefined}
+      onPressIn={advanceForCurrent ? handleTouch : undefined}
+      onPressOut={!advanceForCurrent ? handleTouch : undefined}
     >
       <View style={styles.container}>
         {/* Player A */}

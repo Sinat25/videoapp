@@ -77,6 +77,8 @@ function AppRoot() {
   const [appState, setAppState] = useState<AppState>('boot');
   const [videoPaths, setVideoPaths] = useState<string[]>([]);
   const [hotspots, setHotspots] = useState<(Hotspot | null)[]>([]);
+  // Per-video "advance on touch down" overrides, parallel to videoPaths.
+  const [advanceFlags, setAdvanceFlags] = useState<(boolean | null)[]>([]);
   // Canonical order is kept in videoPaths; this only marks which clip opens
   // first. The playlist handed to the player is rotated at render time.
   const [startVideo, setStartVideo] = useState<string | null>(null);
@@ -178,16 +180,18 @@ function AppRoot() {
     const bootstrap = async () => {
       try {
         // Read the keys in parallel to shave time off the cold start.
-        const [savedVideos, savedHotspots, savedStart] = await Promise.all([
+        const [savedVideos, savedHotspots, savedStart, savedAdvance] = await Promise.all([
           VideoStorage.getVideos(),
           VideoStorage.getHotspots(),
           VideoStorage.getStartVideo(),
+          VideoStorage.getAdvanceFlags(),
         ]);
         if (!mounted) return;
 
         if (savedVideos && savedVideos.length > 0) {
           setVideoPaths(savedVideos);
           setHotspots(savedHotspots);
+          setAdvanceFlags(savedAdvance);
           setStartVideo(savedStart);
           // Straight to the video. The setup screen is only reached again when
           // the user taps past the last clip (onExit).
@@ -204,9 +208,15 @@ function AppRoot() {
     return () => { mounted = false; };
   }, []);
 
-  const handleStartLoading = (paths: string[], hs: (Hotspot | null)[], start: string | null) => {
+  const handleStartLoading = (
+    paths: string[],
+    hs: (Hotspot | null)[],
+    flags: (boolean | null)[],
+    start: string | null
+  ) => {
     setVideoPaths(paths);
     setHotspots(hs);
+    setAdvanceFlags(flags);
     setStartVideo(start);
     setAppState('loading');
   };
@@ -235,11 +245,12 @@ function AppRoot() {
         );
       case 'player': {
         // Rotate a COPY so the chosen clip opens first; canonical order stays.
-        const arranged = rotateToStart(videoPaths, hotspots, startVideo);
+        const arranged = rotateToStart(videoPaths, hotspots, advanceFlags, startVideo);
         return (
           <PlayerScreen
             videoPaths={arranged.paths}
             hotspots={arranged.hotspots}
+            advanceFlags={arranged.advanceFlags}
             onExit={() => setAppState('upload')}
             onFirstFrame={revealVideo}
           />

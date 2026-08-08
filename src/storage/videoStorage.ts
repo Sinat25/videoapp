@@ -4,6 +4,7 @@ import * as FileSystem from 'expo-file-system';
 const STORAGE_KEY = 'SAVED_VIDEO_PATHS';
 const HOTSPOT_KEY = 'SAVED_HOTSPOTS';
 const START_VIDEO_KEY = 'SAVED_START_VIDEO';
+const ADVANCE_FLAGS_KEY = 'SAVED_ADVANCE_FLAGS';
 
 export interface Hotspot {
   x: number; // Percentage 0-100
@@ -50,6 +51,21 @@ export const VideoStorage = {
     return raw ? JSON.parse(raw) : [];
   },
 
+  /**
+   * Per-video "advance on touch down" overrides, stored parallel to the videos
+   * (same indexing as hotspots). Each entry is:
+   *   - true/false: an explicit per-video choice, or
+   *   - null: inherit the global default (SETTINGS_ADVANCE_ON_TOUCH_DOWN).
+   */
+  async saveAdvanceFlags(flags: (boolean | null)[]) {
+    await AsyncStorage.setItem(ADVANCE_FLAGS_KEY, JSON.stringify(flags));
+  },
+
+  async getAdvanceFlags(): Promise<(boolean | null)[]> {
+    const raw = await AsyncStorage.getItem(ADVANCE_FLAGS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  },
+
   async saveVideoFile(uri: string, stepIndex: number): Promise<string> {
     const filename = `step_${stepIndex}_${Date.now()}.mov`;
     const destination = FileSystem.documentDirectory + filename;
@@ -84,6 +100,7 @@ export const VideoStorage = {
       await AsyncStorage.removeItem(STORAGE_KEY);
       await AsyncStorage.removeItem(HOTSPOT_KEY);
       await AsyncStorage.removeItem(START_VIDEO_KEY);
+      await AsyncStorage.removeItem(ADVANCE_FLAGS_KEY);
   }
 };
 
@@ -96,17 +113,21 @@ export const VideoStorage = {
 export function rotateToStart(
   paths: string[],
   hotspots: (Hotspot | null)[],
+  advanceFlags: (boolean | null)[],
   startPath: string | null
-): { paths: string[]; hotspots: (Hotspot | null)[] } {
+): { paths: string[]; hotspots: (Hotspot | null)[]; advanceFlags: (boolean | null)[] } {
   const hs = [...hotspots];
   while (hs.length < paths.length) hs.push(null);
+  const af = [...advanceFlags];
+  while (af.length < paths.length) af.push(null);
 
-  if (!startPath) return { paths: [...paths], hotspots: hs };
+  if (!startPath) return { paths: [...paths], hotspots: hs, advanceFlags: af };
   const i = paths.indexOf(startPath);
-  if (i <= 0) return { paths: [...paths], hotspots: hs };
+  if (i <= 0) return { paths: [...paths], hotspots: hs, advanceFlags: af };
 
   return {
     paths: [...paths.slice(i), ...paths.slice(0, i)],
     hotspots: [...hs.slice(i), ...hs.slice(0, i)],
+    advanceFlags: [...af.slice(i), ...af.slice(0, i)],
   };
 }
